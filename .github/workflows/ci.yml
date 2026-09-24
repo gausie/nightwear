@@ -19,6 +19,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm test
 
       - name: Stage release tree
         if: github.event_name == 'push'

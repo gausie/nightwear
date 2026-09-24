@@ -22,6 +22,10 @@ nightwear
 
 `nightwear.js` in the root is the script. It is plain JavaScript checked with
 `// @ts-check`, so there is no build step: `npm run check` runs TypeScript over
-it against the `kolmafia` type definitions. Pushing to `main` copies the script
-to `scripts/nightwear.js` on the `release` branch, which is what mafia's `git`
-command installs.
+it against the `kolmafia` type definitions, and over the tests. Pushing to
+`main` copies the script to `scripts/nightwear.js` on the `release` branch,
+which is what mafia's `git` command installs.
+
+`npm test` runs the gear arithmetic under vitest. The tests are TypeScript and
+stand a fake in for the `kolmafia` package, so a scenario is written as a
+wardrobe rather than as a pile of stubs - see `test/kolmafia.ts`.

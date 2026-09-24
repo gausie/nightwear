@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts", "../nightwear.js"]
+}

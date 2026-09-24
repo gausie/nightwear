@@ -732,3 +732,10 @@ module.exports.main = function main(args) {
     "blue",
   );
 };
+
+// The gear arithmetic is pure, so the tests drive it directly. Mafia only ever
+// calls main().
+module.exports.bonusOutfits = bonusOutfits;
+module.exports.slotOptions = slotOptions;
+module.exports.planWith = planWith;
+module.exports.chooseGear = chooseGear;
