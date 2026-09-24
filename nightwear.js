@@ -1,10 +1,12 @@
 // @ts-check
 const {
+  allNormalOutfits,
   availableAmount,
   canEquip,
   Effect,
   Familiar,
   haveEffect,
+  haveOutfit,
   haveSkill,
   Item,
   maximize,
@@ -12,6 +14,7 @@ const {
   myAdventures,
   myMp,
   numericModifier,
+  outfitPieces,
   print,
   Slot,
   toSkill,
@@ -23,6 +26,8 @@ const {
 
 /** @typedef {{ item: Item, slot: string, adv: number, fites: number, wearable: boolean }} Piece */
 /** @typedef {{ adv: number, cost: number, items: Item[] }} Option */
+/** @typedef {{ name: string, adv: number, fites: number, pieces: Piece[] }} Outfit */
+/** @typedef {{ cost: number, adv: number, items: Item[] }} Plan */
 
 const ROLLOVER_CAP = 200;
 
@@ -103,6 +108,20 @@ function byFitesDesc(a, b) {
 }
 
 /**
+ * @param {Item} it
+ * @returns {Piece}
+ */
+function pieceFor(it) {
+  return {
+    item: it,
+    slot: slotKey(it),
+    adv: advOf(it),
+    fites: fitesOf(it),
+    wearable: canEquip(it),
+  };
+}
+
+/**
  * Everything we own that carries adventures or fights in a slot we care about.
  *
  * `wearable` is whether we could put it on right now, which for familiar
@@ -126,15 +145,55 @@ function ownedGear(excludedSlots) {
     let adv = advOf(it);
     let fites = fitesOf(it);
     if (adv <= 0 && fites <= 0) continue;
-    pieces.push({
-      item: it,
-      slot: slot,
-      adv: adv,
-      fites: fites,
-      wearable: canEquip(it),
-    });
+    // canEquip() is the expensive part, so it waits until the cheap filters
+    // above have thrown out all but a few dozen of the game's items.
+    pieces.push(pieceFor(it));
   }
   return pieces;
+}
+
+/**
+ * Outfits whose completion bonus is worth chasing: every one we own all of, can
+ * wear, and whose set bonus carries adventures or fights. Derived rather than
+ * listed, so nothing here has to know it currently means Gladiatorial Glad
+ * Rags, Time Trappings and Workoutfit.
+ *
+ * @param {Set<string>} excludedSlots
+ * @returns {Outfit[]}
+ */
+function bonusOutfits(excludedSlots) {
+  /** @type {Outfit[]} */
+  const out = [];
+  const all = allNormalOutfits();
+  for (let i = 0; i < all.length; i++) {
+    let name = all[i];
+    // "Outfit:" picks the set bonus rather than any item of the same name.
+    let adv = numericModifier(`Outfit:${name}`, "Adventures");
+    let fites = numericModifier(`Outfit:${name}`, "PvP Fights");
+    if (adv <= 0 && fites <= 0) continue;
+    // haveOutfit() is hasAllPieces(), ownership alone, so wearing it is ours
+    // to check - the same standard the rest of the script holds gear to.
+    if (!haveOutfit(name)) continue;
+
+    let pieces = outfitPieces(name).map(pieceFor);
+    let usable = pieces.length > 0;
+    for (let j = 0; j < pieces.length; j++) {
+      let piece = pieces[j];
+      let known = SLOT_KEYS.indexOf(piece.slot) >= 0;
+      // A two-hander costs us the off-hand, which pricing a slot at a time
+      // can't express - the same trade slotOptions() refuses for the same
+      // reason. Neither set bonus needs one today, but the list is derived.
+      let twoHanded = piece.slot === "weapon" && weaponHands(piece.item) > 1;
+      if (!piece.wearable || !known || twoHanded || excludedSlots.has(piece.slot)) {
+        usable = false;
+        break;
+      }
+    }
+    if (!usable) continue;
+
+    out.push({ name: name, adv: adv, fites: fites, pieces: pieces });
+  }
+  return out;
 }
 
 /**
@@ -328,18 +387,28 @@ function slotFites(pool, capacity, forced) {
  * adventure gear forced into it. An item carrying both pays its own way, which
  * is what makes a +4 adv / +4 fites worth more than a bare +9 adv.
  *
+ * `claimed` is what an outfit has already put in this slot. It is worn either
+ * way, so it belongs to the baseline rather than to any one option, and the
+ * room left for adventure gear shrinks by however much of the slot it takes.
+ *
  * @param {Piece[]} inSlot
  * @param {string} slot
+ * @param {Piece[]} claimed
  * @returns {Option[]}
  */
-function slotOptions(inSlot, slot) {
+function slotOptions(inSlot, slot, claimed) {
   const capacity = CAPACITY[slot] || 1;
-  const base = slotFites(inSlot, capacity, []);
+  const base = slotFites(inSlot, capacity, claimed);
+
+  /** @type {Record<string, boolean>} */
+  const spoken = {};
+  for (let i = 0; i < claimed.length; i++) spoken[claimed[i].item.name] = true;
 
   /** @type {Piece[]} */
   const advPieces = [];
   for (let i = 0; i < inSlot.length; i++) {
     if (inSlot[i].adv <= 0) continue;
+    if (spoken[inSlot[i].item.name]) continue;
     // A two-hander forfeits the off-hand, which a slot-at-a-time model can't
     // express - and the off-hand is nearly always worth more than the trade.
     if (slot === "weapon" && weaponHands(inSlot[i].item) > 1) continue;
@@ -348,12 +417,12 @@ function slotOptions(inSlot, slot) {
 
   /** @type {Option[]} */
   const options = [];
-  const combos = combinations(advPieces.length, capacity);
+  const combos = combinations(advPieces.length, capacity - claimed.length);
   for (let i = 0; i < combos.length; i++) {
     let combo = combos[i];
     let adv = 0;
     /** @type {Piece[]} */
-    let forced = [];
+    let forced = claimed.slice();
     /** @type {Item[]} */
     let items = [];
     for (let j = 0; j < combo.length; j++) {
@@ -372,17 +441,23 @@ function slotOptions(inSlot, slot) {
 }
 
 /**
- * Cheapest gear that covers `need` adventures, cheapest meaning fewest PvP
- * fights sacrificed. Exact: a slot-by-slot DP over adventures accumulated,
- * where ties go to whichever overshoots the cap by less.
+ * A slot-by-slot DP over adventures accumulated: cell `a` is the cheapest way
+ * found to reach `a` of them, cheapness meaning fewest PvP fights sacrificed,
+ * with ties going to whichever overshoots by less. Cell `need` is capped, so
+ * anything that reaches or passes the target lands there.
+ *
+ * `outfit`, if given, is worn before any of it: its pieces claim their slots,
+ * its own adventures and the set bonus seed the starting cell, and the fights
+ * those slots would have carried are what it costs. Every cost in here is
+ * measured against the same baseline - every slot left to fights - so plans
+ * from different outfits compare directly.
  *
  * @param {Piece[]} pieces
+ * @param {Outfit | null} outfit
  * @param {number} need
- * @returns {Item[]}
+ * @returns {(Plan | null)[]}
  */
-function chooseGear(pieces, need) {
-  if (need <= 0) return [];
-
+function planWith(pieces, outfit, need) {
   /** @type {Record<string, Piece[]>} */
   const bySlot = {};
   for (let i = 0; i < pieces.length; i++) {
@@ -391,15 +466,39 @@ function chooseGear(pieces, need) {
     bySlot[piece.slot].push(piece);
   }
 
-  /** @type {({ cost: number, adv: number, items: Item[] } | null)[]} */
+  /** @type {Record<string, Piece[]>} */
+  const claimed = {};
+  /** @type {Item[]} */
+  const worn = [];
+  let cost = 0;
+  let adv = 0;
+  if (outfit !== null) {
+    for (let i = 0; i < outfit.pieces.length; i++) {
+      let piece = outfit.pieces[i];
+      if (!claimed[piece.slot]) claimed[piece.slot] = [];
+      claimed[piece.slot].push(piece);
+      worn.push(piece.item);
+      adv += piece.adv;
+    }
+    adv += outfit.adv;
+    // The set bonus is fights we would not otherwise have had, so it pays us.
+    cost -= outfit.fites;
+    for (let slot in claimed) {
+      let pool = bySlot[slot] || [];
+      let capacity = CAPACITY[slot] || 1;
+      cost += slotFites(pool, capacity, []) - slotFites(pool, capacity, claimed[slot]);
+    }
+  }
+
+  /** @type {(Plan | null)[]} */
   let dp = [];
   for (let i = 0; i <= need; i++) dp.push(null);
-  dp[0] = { cost: 0, adv: 0, items: [] };
+  dp[Math.min(need, adv)] = { cost: cost, adv: adv, items: worn };
 
   for (let s = 0; s < SLOT_KEYS.length; s++) {
     let slot = SLOT_KEYS[s];
     if (!bySlot[slot]) continue;
-    let options = slotOptions(bySlot[slot], slot);
+    let options = slotOptions(bySlot[slot], slot, claimed[slot] || []);
     let next = dp.slice();
     for (let a = 0; a <= need; a++) {
       let from = dp[a];
@@ -422,14 +521,54 @@ function chooseGear(pieces, need) {
     }
     dp = next;
   }
+  return dp;
+}
 
-  const solved = dp[need];
-  if (solved !== null) return solved.items;
+/**
+ * Cheapest gear that covers `need` adventures, cheapest meaning fewest PvP
+ * fights sacrificed.
+ *
+ * A set bonus spans slots, which a DP that prices one slot at a time has no
+ * way to express, so each candidate outfit instead gets a run of its own with
+ * the whole set already on and the cheapest run wins. That is why an outfit is
+ * never assembled by accident: it is either worth its slots outright or it
+ * loses to the run that left them free.
+ *
+ * @param {Piece[]} pieces
+ * @param {Outfit[]} outfits
+ * @param {number} need
+ * @returns {Item[]}
+ */
+function chooseGear(pieces, outfits, need) {
+  if (need <= 0) return [];
+
+  /** @type {(Plan | null)[][]} */
+  const plans = [planWith(pieces, null, need)];
+  for (let i = 0; i < outfits.length; i++) {
+    plans.push(planWith(pieces, outfits[i], need));
+  }
+
+  /** @type {Plan | null} */
+  let best = null;
+  for (let i = 0; i < plans.length; i++) {
+    let solved = plans[i][need];
+    if (solved === null) continue;
+    if (
+      best === null ||
+      solved.cost < best.cost ||
+      (solved.cost === best.cost && solved.adv < best.adv)
+    ) {
+      best = solved;
+    }
+  }
+  if (best !== null) return best.items;
 
   // Can't get there. Wear whatever gets closest so the caller can report it.
   for (let a = need - 1; a > 0; a--) {
-    let closest = dp[a];
-    if (closest !== null) return closest.items;
+    for (let i = 0; i < plans.length; i++) {
+      let closest = plans[i][a];
+      if (closest !== null) return closest.items;
+    }
   }
   return [];
 }
@@ -495,20 +634,28 @@ function expressionFor(pinned, offered, target, excluded) {
  * put its hands.
  *
  * @param {Piece[]} pieces
+ * @param {Outfit[]} outfits
  * @param {Familiar[]} offered
  * @param {number} target
  * @param {string[]} excluded
  * @returns {string | null} null if even everything we own falls short
  */
-function solve(pieces, offered, target, excluded) {
+function solve(pieces, outfits, offered, target, excluded) {
   let ceiling = 0;
   for (let i = 0; i < pieces.length; i++) ceiling += pieces[i].adv;
+  // Set bonuses sit on top of the pieces, which are counted already.
+  for (let i = 0; i < outfits.length; i++) ceiling += outfits[i].adv;
 
   /** @type {Record<string, boolean>} */
   const tried = {};
   let probes = 0;
   for (let need = 0; need <= ceiling; need++) {
-    let candidate = expressionFor(chooseGear(pieces, need), offered, target, excluded);
+    let candidate = expressionFor(
+      chooseGear(pieces, outfits, need),
+      offered,
+      target,
+      excluded,
+    );
     // Consecutive needs usually want the same gear; only pay for new ones.
     if (tried[candidate] !== undefined) continue;
     if (probes++ >= PROBE_LIMIT) break;
@@ -521,8 +668,9 @@ function solve(pieces, offered, target, excluded) {
 /**
  * Top up to exactly the 200 adventure rollover cap, then spend every remaining
  * slot on PvP fights. The maximizer can't do this in one expression, so we
- * achieve it in code. It will change familiar where that buys a slot, and cast
- * Offhand Remarkable where an off-hand is worth doubling.
+ * achieve it in code. It will change familiar where that buys a slot, complete
+ * an outfit where the set bonus is worth its slots, and cast Offhand
+ * Remarkable where an off-hand is worth doubling.
  *
  * @param {string} [args] Maximizer slot exclusions, e.g. "-hat".
  */
@@ -534,30 +682,24 @@ module.exports.main = function main(args) {
 
   const target = Math.max(0, ROLLOVER_CAP - myAdventures());
   const gear = ownedGear(excludedSlots);
+  const outfits = bonusOutfits(excludedSlots);
   // Before anything is weighed, so both the maximizer and our own arithmetic
   // price off-hands at what they will actually be worth.
   if (offhandRemarkable(gear, target)) {
     doubleOffhands(gear);
-    print("Offhand Remarkable is up, so off-hands count double.", "blue");
+    for (let i = 0; i < outfits.length; i++) doubleOffhands(outfits[i].pieces);
   }
   const offered = excludedSlots.has("familiar") ? [] : candidates(gear);
   const wearable = gear.filter((piece) => piece.wearable);
-  // With a familiar on offer the familiar slot is theirs to bid for, so we stop
-  // pinning it: a carrier can only earn the slot if the slot is free, and the
-  // maximizer prices that against the rest of the outfit better than we can.
-  // Pinning the +4 adv / +4 fites there looks free to us and costs 15 fights.
   const pool = offered.length > 0
     ? wearable.filter((piece) => piece.slot !== "familiar")
     : wearable;
-  const expression = solve(pool, offered, target, excluded);
+  const expression = solve(pool, outfits, offered, target, excluded);
 
   if (expression !== null) {
     print(expression);
     maximize(expression, false);
-    // Judge by what we ended up in rather than by what maximize() returned: a
-    // familiar switch makes it lie both ways, reporting success having equipped
-    // the familiar's half of the outfit and then dropped it. Asking again with
-    // the familiar already changed settles it.
+    // Judge by what we ended up in rather than by what maximize() returned
     if (numericModifier("Adventures") < target) maximize(expression, false);
   }
 
