@@ -7,7 +7,7 @@ import type { Item as MafiaItem } from "kolmafia";
  * `world` is mutable and read on every call, so a test sets it up and the
  * already-loaded script sees it.
  */
-type ItemSpec = {
+export type ItemSpec = {
   slot: string;
   adv?: number;
   fites?: number;
@@ -23,6 +23,15 @@ type OutfitSpec = {
   owned?: boolean;
 };
 
+/** An item that carries nothing, which is also what an unknown one looks like. */
+const NOTHING: Required<ItemSpec> = {
+  slot: "none",
+  adv: 0,
+  fites: 0,
+  wearable: true,
+  hands: 1,
+};
+
 const world = {
   items: {} as Record<string, Required<ItemSpec>>,
   outfits: {} as Record<string, Required<OutfitSpec>>,
@@ -35,13 +44,7 @@ export function reset(): void {
 
 /** Declare an item. Anything left out is nothing. */
 export function item(name: string, spec: ItemSpec): MafiaItem {
-  world.items[name] = {
-    adv: 0,
-    fites: 0,
-    wearable: true,
-    hands: 1,
-    ...spec,
-  };
+  world.items[name] = { ...NOTHING, ...spec };
   return asItem(name);
 }
 
@@ -55,8 +58,7 @@ export function outfit(name: string, spec: OutfitSpec): string {
 const asItem = (name: string) =>
   ({ name, toString: () => name }) as unknown as MafiaItem;
 
-const lookup = (it: unknown): Required<ItemSpec> =>
-  world.items[String(it)] ?? { slot: "none", adv: 0, fites: 0, wearable: true, hands: 1 };
+const lookup = (it: unknown): Required<ItemSpec> => world.items[String(it)] ?? NOTHING;
 
 export const Item = { all: () => Object.keys(world.items).map(asItem) };
 export const Effect = { get: asItem };

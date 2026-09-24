@@ -1,21 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { item, outfit, reset } from "./kolmafia.js";
+import { type ItemSpec, item, outfit, reset } from "./kolmafia.js";
 import nightwear from "./load.js";
 
-const { bonusOutfits, chooseGear, planWith, slotOptions } = nightwear;
-
-type Spec = Parameters<typeof item>[1];
+const { bonusOutfits, gearFor, pieceFor, planWith, plansFor, slotOptions } = nightwear;
 
 /** Declare an item and hand back the Piece the gear arithmetic works in. */
-function gear(name: string, spec: Spec) {
-  return {
-    item: item(name, spec),
-    slot: spec.slot,
-    adv: spec.adv ?? 0,
-    fites: spec.fites ?? 0,
-    wearable: spec.wearable ?? true,
-  };
-}
+const gear = (name: string, spec: ItemSpec) => pieceFor(item(name, spec));
+
+/** What the script does per need, which the tests ask about one need at a time. */
+const chooseGear = (...args: Parameters<typeof plansFor>) =>
+  gearFor(plansFor(...args), args[2]);
 
 const names = (items: { toString(): string }[]) => items.map(String).sort();
 
@@ -182,6 +176,42 @@ describe("chooseGear", () => {
     const workout = { name: "Workoutfit", adv: 0, fites: 2, pieces: [band, shorts] };
 
     expect(names(chooseGear([band, shorts, advHat], [workout], 6))).toEqual(["adv hat"]);
+  });
+});
+
+describe("plansFor", () => {
+  it("answers every need from one run at the ceiling", () => {
+    // What solve() relies on: rather than solving again per need, it runs the
+    // DP once as high as the wardrobe goes and reads each need out of that.
+    const pool = [
+      gear("adv hat", { slot: "hat", adv: 5 }),
+      gear("fites hat", { slot: "hat", fites: 7 }),
+      gear("adv pants", { slot: "pants", adv: 4, fites: 2 }),
+      gear("fites pants", { slot: "pants", fites: 6 }),
+      gear("adv weapon", { slot: "weapon", adv: 3 }),
+      gear("adv cloak", { slot: "back", adv: 2, fites: 1 }),
+      gear("ring A", { slot: "acc1", adv: 3 }),
+      gear("ring B", { slot: "acc1", fites: 5 }),
+      gear("ring C", { slot: "acc1", adv: 2, fites: 2 }),
+    ];
+    const set = {
+      name: "Cheap Set",
+      adv: 4,
+      fites: 1,
+      pieces: [gear("plain hat", { slot: "hat" }), gear("plain shirt", { slot: "shirt" })],
+    };
+    const outfits = [set];
+
+    const ceiling =
+      pool.reduce((total, piece) => total + piece.adv, 0) +
+      outfits.reduce((total, o) => total + o.adv, 0);
+    const hoisted = plansFor(pool, outfits, ceiling);
+
+    for (let need = 1; need <= ceiling; need++) {
+      expect(names(gearFor(hoisted, need))).toEqual(
+        names(gearFor(plansFor(pool, outfits, need), need)),
+      );
+    }
   });
 });
 
