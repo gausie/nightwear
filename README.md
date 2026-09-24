@@ -1,8 +1,8 @@
 # nightwear
 
 Equips you for rollover. It works out how many adventures you need to reach the
-200 adventure rollover cap given what you already have in hand, buys exactly
-that many, and then spends every remaining slot on PvP fights. It only considers
+200 adventure rollover cap given what you already have in hand, dresses for
+exactly that many, and then spends every remaining slot on PvP fights. It only considers
 gear you can actually wear right now, and will change familiar where a familiar
 equipment costume is worth the switch.
 
