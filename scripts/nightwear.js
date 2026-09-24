@@ -6,7 +6,6 @@ const {
   Item,
   maximize,
   myAdventures,
-  myFamiliar,
   numericModifier,
   print,
   Slot,
@@ -513,7 +512,7 @@ module.exports.main = function main(args) {
   // target 0 means we're already past 200 in hand, so "over" is meaningless.
   const note = target === 0 ? "already at the cap" : `${Math.max(0, adv - target)} over the cap`;
   print(
-    `Rollover: ${adv} adv (${note}), ${numericModifier("PvP Fights")} fites, riding ${myFamiliar()}.`,
+    `Rollover: ${adv} adv (${note}), ${numericModifier("PvP Fights")} fites.`,
     "blue",
   );
 };
