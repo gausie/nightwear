@@ -1,8 +1,13 @@
 # nightwear
 
-Works out the equipment that gives you the most rollover adventures, taking into
-account what you can actually wear right now and which familiar is worth
-swapping to for its costume.
+Equips you for rollover. It works out how many adventures you need to reach the
+200 adventure rollover cap given what you already have in hand, buys exactly
+that many, and then spends every remaining slot on PvP fights. It only considers
+gear you can actually wear right now, and will change familiar where a familiar
+equipment costume is worth the switch.
+
+Pass maximizer style slot exclusions to leave a slot alone, e.g. `nightwear
+-hat`.
 
 ## Installing
 
@@ -14,7 +19,7 @@ nightwear
 ## Developing
 
 `nightwear.js` in the root is the script. It is plain JavaScript checked with
-`// @ts-check`, so there is no build step - `npm run check` runs TypeScript over
+`// @ts-check`, so there is no build step: `npm run check` runs TypeScript over
 it against the `kolmafia` type definitions. Pushing to `main` copies the script
 to `scripts/nightwear.js` on the `release` branch, which is what mafia's `git`
 command installs.
