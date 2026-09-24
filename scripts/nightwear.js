@@ -2,14 +2,21 @@
 const {
   availableAmount,
   canEquip,
+  Effect,
   Familiar,
+  haveEffect,
+  haveSkill,
   Item,
   maximize,
+  mpCost,
   myAdventures,
+  myMp,
   numericModifier,
   print,
   Slot,
+  toSkill,
   toSlot,
+  useSkill,
   weaponHands,
   haveFamiliar,
 } = require("kolmafia");
@@ -40,6 +47,12 @@ const SLOT_KEYS = [
  * @type {Record<string, number>}
  */
 const CAPACITY = { acc1: 3 };
+
+/**
+ * Doubles the enchantments of whatever is in an off-hand, ours and the
+ * Left-Hand Man's alike, so an off-hand under it is worth two slots.
+ */
+const OFFHAND_REMARKABLE = Effect.get("Offhand Remarkable");
 
 /**
  * Familiars that hold an ordinary weapon or off-hand in the familiar slot and
@@ -122,6 +135,60 @@ function ownedGear(excludedSlots) {
     });
   }
   return pieces;
+}
+
+/**
+ * Is Offhand Remarkable up, casting it if it isn't and it would pay?
+ *
+ * It pays whenever an off-hand we could wear carries something this run is
+ * optimising for. Adventures only count towards that while we still need some:
+ * at the cap every slot is spent on fights, so an off-hand with nothing but
+ * adventures on it has nothing to double.
+ *
+ * Reaching the skill through the effect rather than naming it keeps the one
+ * fact we depend on - what the effect does - in one place, and picks up any
+ * other source of it for free.
+ *
+ * @param {Piece[]} gear
+ * @param {number} target
+ * @returns {boolean}
+ */
+function offhandRemarkable(gear, target) {
+  if (haveEffect(OFFHAND_REMARKABLE) > 0) return true;
+
+  let worth = false;
+  for (let i = 0; i < gear.length; i++) {
+    let piece = gear[i];
+    if (piece.slot !== "off-hand" || !piece.wearable) continue;
+    if (piece.fites > 0 || (target > 0 && piece.adv > 0)) {
+      worth = true;
+      break;
+    }
+  }
+  if (!worth) return false;
+
+  const skill = toSkill(OFFHAND_REMARKABLE);
+  if (!haveSkill(skill)) return false;
+  if (skill.dailylimit === 0) return false;
+  if (mpCost(skill) > myMp()) return false;
+
+  useSkill(skill, 1);
+  return haveEffect(OFFHAND_REMARKABLE) > 0;
+}
+
+/**
+ * numericModifier() on an item reports what is stamped on it, so the doubling
+ * is ours to apply. Nothing crosses zero, so no piece ownedGear() dropped for
+ * carrying neither adventures nor fights would have been kept.
+ *
+ * @param {Piece[]} gear
+ */
+function doubleOffhands(gear) {
+  for (let i = 0; i < gear.length; i++) {
+    if (gear[i].slot !== "off-hand") continue;
+    gear[i].adv *= 2;
+    gear[i].fites *= 2;
+  }
 }
 
 /**
@@ -454,7 +521,8 @@ function solve(pieces, offered, target, excluded) {
 /**
  * Top up to exactly the 200 adventure rollover cap, then spend every remaining
  * slot on PvP fights. The maximizer can't do this in one expression, so we
- * achieve it in code. It will change familiar where that buys a slot.
+ * achieve it in code. It will change familiar where that buys a slot, and cast
+ * Offhand Remarkable where an off-hand is worth doubling.
  *
  * @param {string} [args] Maximizer slot exclusions, e.g. "-hat".
  */
@@ -466,6 +534,12 @@ module.exports.main = function main(args) {
 
   const target = Math.max(0, ROLLOVER_CAP - myAdventures());
   const gear = ownedGear(excludedSlots);
+  // Before anything is weighed, so both the maximizer and our own arithmetic
+  // price off-hands at what they will actually be worth.
+  if (offhandRemarkable(gear, target)) {
+    doubleOffhands(gear);
+    print("Offhand Remarkable is up, so off-hands count double.", "blue");
+  }
   const offered = excludedSlots.has("familiar") ? [] : candidates(gear);
   const wearable = gear.filter((piece) => piece.wearable);
   // With a familiar on offer the familiar slot is theirs to bid for, so we stop
