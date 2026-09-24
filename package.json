@@ -1,0 +1,13 @@
+{
+  "name": "nightwear",
+  "version": "1.0.0",
+  "description": "Maximise rollover adventures from equipment you can actually wear",
+  "private": true,
+  "scripts": {
+    "check": "tsc"
+  },
+  "devDependencies": {
+    "kolmafia": "^5.28537.0",
+    "typescript": "^5.6.2"
+  }
+}
