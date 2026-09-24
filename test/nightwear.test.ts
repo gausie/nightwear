@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { type ItemSpec, item, outfit, reset } from "./kolmafia.js";
 import nightwear from "./load.js";
 
-const { bonusOutfits, gearFor, pieceFor, planWith, plansFor, slotOptions } = nightwear;
+const { bonusOutfits, gearFor, pieceFor, planWith, plansFor, slotOptions, twoHanders } =
+  nightwear;
 
 /** Declare an item and hand back the Piece the gear arithmetic works in. */
 const gear = (name: string, spec: ItemSpec) => pieceFor(item(name, spec));
@@ -25,7 +26,7 @@ describe("bonusOutfits", () => {
       pieces: ["time helmet", "time sword", "time trousers"],
     });
 
-    const found = bonusOutfits(new Set<string>());
+    const found = bonusOutfits([], new Set<string>());
 
     expect(found).toHaveLength(1);
     expect(found[0].name).toBe("Time Trappings");
@@ -42,7 +43,7 @@ describe("bonusOutfits", () => {
     item("hippy pants", { slot: "pants" });
     outfit("Filthy Hippy Disguise", { pieces: ["hippy hat", "hippy pants"] });
 
-    expect(bonusOutfits(new Set<string>())).toEqual([]);
+    expect(bonusOutfits([], new Set<string>())).toEqual([]);
   });
 
   it("ignores an outfit we are missing a piece of", () => {
@@ -54,7 +55,7 @@ describe("bonusOutfits", () => {
       owned: false,
     });
 
-    expect(bonusOutfits(new Set<string>())).toEqual([]);
+    expect(bonusOutfits([], new Set<string>())).toEqual([]);
   });
 
   it("ignores an outfit holding a piece we cannot wear", () => {
@@ -67,15 +68,45 @@ describe("bonusOutfits", () => {
       pieces: ["centurion helmet", "gladiator tunica"],
     });
 
-    expect(bonusOutfits(new Set<string>())).toEqual([]);
+    expect(bonusOutfits([], new Set<string>())).toEqual([]);
   });
 
-  it("ignores an outfit that wants both hands", () => {
+  it("blocks the off-hand for an outfit that wants both hands", () => {
     item("big sword", { slot: "weapon", hands: 2 });
     item("big hat", { slot: "hat" });
     outfit("Two-Fisted Trousers", { adv: 5, pieces: ["big sword", "big hat"] });
 
-    expect(bonusOutfits(new Set<string>())).toEqual([]);
+    const found = bonusOutfits([], new Set<string>());
+
+    expect(found).toHaveLength(1);
+    expect(found[0].blocks).toEqual(["off-hand"]);
+  });
+
+  it("ignores an outfit wanting both hands and an off-hand at once", () => {
+    item("big sword", { slot: "weapon", hands: 2 });
+    item("small shield", { slot: "off-hand" });
+    outfit("Impossible Kit", { adv: 5, pieces: ["big sword", "small shield"] });
+
+    expect(bonusOutfits([], new Set<string>())).toEqual([]);
+  });
+
+  it("takes its pieces from the gear pool, and leaves what it added behind", () => {
+    const helmet = gear("time helmet", { slot: "hat", adv: 3 });
+    // Blank, so the gear pool has no reason to have heard of it.
+    item("time trousers", { slot: "pants" });
+    outfit("Time Trappings", {
+      adv: 3,
+      pieces: ["time helmet", "time trousers"],
+    });
+
+    const pool = [helmet];
+    const found = bonusOutfits(pool, new Set<string>());
+
+    // One Piece per item however it was reached, so doubling an off-hand or
+    // dropping a piece from the pool lands on the outfit too.
+    expect(found[0].pieces).toContain(helmet);
+    expect(pool).toHaveLength(2);
+    expect(pool).toContain(found[0].pieces[1]);
   });
 
   it("ignores an outfit reaching into a slot we were told to leave alone", () => {
@@ -83,8 +114,8 @@ describe("bonusOutfits", () => {
     item("time trousers", { slot: "pants", adv: 3 });
     outfit("Time Trappings", { adv: 3, pieces: ["time helmet", "time trousers"] });
 
-    expect(bonusOutfits(new Set(["hat"]))).toEqual([]);
-    expect(bonusOutfits(new Set(["back"]))).toHaveLength(1);
+    expect(bonusOutfits([], new Set(["hat"]))).toEqual([]);
+    expect(bonusOutfits([], new Set(["back"]))).toHaveLength(1);
   });
 });
 
@@ -108,6 +139,7 @@ describe("chooseGear", () => {
       adv: 3,
       fites: 0,
       pieces: pool,
+      blocks: [],
     };
 
     // Nine adventures live on the pieces, so twelve is out of reach without
@@ -138,6 +170,7 @@ describe("chooseGear", () => {
         gear("pteruges", { slot: "pants" }),
         gear("Roman sadnals", { slot: "acc1" }),
       ],
+      blocks: [],
     };
     const pool = [gear("fites hat", { slot: "hat", fites: 4 })];
 
@@ -161,6 +194,7 @@ describe("chooseGear", () => {
       adv: 6,
       fites: 0,
       pieces: [gear("plain hat", { slot: "hat" }), gear("plain pants", { slot: "pants" })],
+      blocks: [],
     };
     const pool = [cloak, fitesCloak, meagreHat];
 
@@ -169,11 +203,54 @@ describe("chooseGear", () => {
     expect(names(chooseGear(pool, [set], 6))).toEqual(["plain hat", "plain pants"]);
   });
 
+  it("wears a two-hander when it beats the off-hand it costs", () => {
+    const sword = gear("huge sword", { slot: "weapon", adv: 8, hands: 2 });
+    const shield = gear("fites shield", { slot: "off-hand", fites: 3 });
+    const advHat = gear("adv hat", { slot: "hat", adv: 8 });
+    const fitesHat = gear("fites hat", { slot: "hat", fites: 9 });
+    const pool = [sword, shield, advHat, fitesHat];
+
+    // The hat costs the 9 fight hat; the sword costs only the 3 fight shield.
+    expect(names(chooseGear(pool, [], 8))).toEqual(["adv hat"]);
+    expect(names(chooseGear(pool, twoHanders(pool), 8))).toEqual(["huge sword"]);
+  });
+
+  it("leaves a two-hander alone when the off-hand is worth more", () => {
+    const sword = gear("huge sword", { slot: "weapon", adv: 8, hands: 2 });
+    const shield = gear("fites shield", { slot: "off-hand", fites: 12 });
+    const advHat = gear("adv hat", { slot: "hat", adv: 8 });
+    const fitesHat = gear("fites hat", { slot: "hat", fites: 9 });
+    const pool = [sword, shield, advHat, fitesHat];
+
+    expect(names(chooseGear(pool, twoHanders(pool), 8))).toEqual(["adv hat"]);
+  });
+
+  it("counts the fights on a two-hander as gained rather than given up", () => {
+    // Nothing is worn in two hands unless we commit to it, so a two-hander is
+    // never part of what a slot would have carried left alone.
+    const sword = gear("huge sword", { slot: "weapon", adv: 5, fites: 10, hands: 2 });
+    const dagger = gear("dagger", { slot: "weapon", fites: 2 });
+    const shield = gear("fites shield", { slot: "off-hand", fites: 4 });
+    const advHat = gear("adv hat", { slot: "hat", adv: 5 });
+    const fitesHat = gear("fites hat", { slot: "hat", fites: 1 });
+    const pool = [sword, dagger, shield, advHat, fitesHat];
+
+    // The sword gains 10 and gives up the dagger and the shield, so it pays 4
+    // fights to wear. The hat costs 1.
+    expect(names(chooseGear(pool, twoHanders(pool), 5))).toEqual(["huge sword"]);
+  });
+
   it("breaks a set when the adventures can only come from a slot it claims", () => {
     const band = gear("sweatband", { slot: "hat", fites: 2 });
     const shorts = gear("gym shorts", { slot: "pants", fites: 2 });
     const advHat = gear("adv hat", { slot: "hat", adv: 6 });
-    const workout = { name: "Workoutfit", adv: 0, fites: 2, pieces: [band, shorts] };
+    const workout = {
+      name: "Workoutfit",
+      adv: 0,
+      fites: 2,
+      pieces: [band, shorts],
+      blocks: [],
+    };
 
     expect(names(chooseGear([band, shorts, advHat], [workout], 6))).toEqual(["adv hat"]);
   });
@@ -199,6 +276,7 @@ describe("plansFor", () => {
       adv: 4,
       fites: 1,
       pieces: [gear("plain hat", { slot: "hat" }), gear("plain shirt", { slot: "shirt" })],
+      blocks: [],
     };
     const outfits = [set];
 
